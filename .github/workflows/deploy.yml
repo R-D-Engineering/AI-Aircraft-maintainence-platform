@@ -27,7 +27,7 @@ jobs:
       BACKEND_REPOSITORY: ${{ secrets.BACKEND_REPOSITORY }}
       FRONTEND_REPOSITORY: ${{ secrets.FRONTEND_REPOSITORY }}
 
-      EKS_ACCESS_POLICY_ARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy
+      EKS_ACCESS_POLICY_ARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
 
     steps:
 
@@ -271,17 +271,28 @@ jobs:
 
           echo "Checking EKS access policy association..."
 
-          ASSOCIATED_POLICY_COUNT="$(aws eks list-associated-access-policies \
+          POLICY_SCOPE="$(aws eks list-associated-access-policies \
             --cluster-name "${CLUSTER_NAME}" \
             --principal-arn "${PRINCIPAL_ARN}" \
             --region "${REGION}" \
-            --query "associatedAccessPolicies[?policyArn=='${ACCESS_POLICY_ARN}'] | length(@)" \
-            --output text)"
+            --query "associatedAccessPolicies[?policyArn=='${ACCESS_POLICY_ARN}'].accessScope.type | [0]" \
+            --output text 2>/dev/null || true)"
 
-          if [ "${ASSOCIATED_POLICY_COUNT}" = "1" ]; then
-            echo "AmazonEKSAdminPolicy is already associated."
+          if [ "${POLICY_SCOPE}" = "cluster" ]; then
+            echo "AmazonEKSClusterAdminPolicy is already associated with cluster scope."
           else
-            echo "Associating AmazonEKSAdminPolicy..."
+            if [ "${POLICY_SCOPE}" != "None" ] && [ -n "${POLICY_SCOPE}" ]; then
+              echo "Existing AmazonEKSClusterAdminPolicy association has scope: ${POLICY_SCOPE}"
+              echo "Removing the existing association so it can be repaired to cluster scope..."
+
+              aws eks disassociate-access-policy \
+                --cluster-name "${CLUSTER_NAME}" \
+                --principal-arn "${PRINCIPAL_ARN}" \
+                --policy-arn "${ACCESS_POLICY_ARN}" \
+                --region "${REGION}"
+            fi
+
+            echo "Associating AmazonEKSClusterAdminPolicy with cluster scope..."
 
             aws eks associate-access-policy \
               --cluster-name "${CLUSTER_NAME}" \
@@ -290,8 +301,24 @@ jobs:
               --access-scope type=cluster \
               --region "${REGION}"
 
-            echo "AmazonEKSAdminPolicy associated."
+            echo "AmazonEKSClusterAdminPolicy associated."
           fi
+
+          echo "Verifying access policy association..."
+
+          FINAL_POLICY_SCOPE="$(aws eks list-associated-access-policies \
+            --cluster-name "${CLUSTER_NAME}" \
+            --principal-arn "${PRINCIPAL_ARN}" \
+            --region "${REGION}" \
+            --query "associatedAccessPolicies[?policyArn=='${ACCESS_POLICY_ARN}'].accessScope.type | [0]" \
+            --output text)"
+
+          if [ "${FINAL_POLICY_SCOPE}" != "cluster" ]; then
+            echo "ERROR: AmazonEKSClusterAdminPolicy is not associated with cluster scope."
+            exit 1
+          fi
+
+          echo "EKS ClusterAdmin access policy is confirmed."
 
       # ----------------------------------------------------
       # Configure kubectl
@@ -321,6 +348,9 @@ jobs:
 
           echo "Current Kubernetes identity:"
           kubectl auth whoami
+
+          echo "Kubernetes authorization check:"
+          kubectl auth can-i get nodes
 
           echo "Nodes:"
           kubectl get nodes
