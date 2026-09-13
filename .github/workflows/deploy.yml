@@ -10,100 +10,176 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: aircraft-maintenance-deploy
+  cancel-in-progress: false
+
 jobs:
-
   deploy:
-
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-      BACKEND_IMAGE: ${{ secrets.BACKEND_IMAGE }}
-      FRONTEND_IMAGE: ${{ secrets.FRONTEND_IMAGE }}
       EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
+      BACKEND_REPOSITORY: ${{ secrets.BACKEND_REPOSITORY }}
+      FRONTEND_REPOSITORY: ${{ secrets.FRONTEND_REPOSITORY }}
 
     steps:
 
       # ----------------------------------------------------
-      # Checkout Repository
+      # Checkout
       # ----------------------------------------------------
 
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       # ----------------------------------------------------
-      # Configure AWS Credentials
+      # AWS OIDC Authentication
       # ----------------------------------------------------
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-actions-${{ github.run_id }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
 
       # ----------------------------------------------------
-      # Login to Amazon ECR
+      # Verify AWS Authentication
+      # ----------------------------------------------------
+
+      - name: Verify AWS Identity
+        run: |
+          set -e
+
+          echo "AWS Account:"
+          aws sts get-caller-identity
+
+          echo "AWS Region:"
+          echo "${AWS_REGION}"
+
+          echo "EKS Cluster:"
+          echo "${EKS_CLUSTER_NAME}"
+
+      # ----------------------------------------------------
+      # Verify ECR Repositories
+      # ----------------------------------------------------
+
+      - name: Verify ECR Repositories
+        run: |
+          set -e
+
+          aws ecr describe-repositories \
+            --repository-names "${BACKEND_REPOSITORY}" \
+            --region "${AWS_REGION}"
+
+          aws ecr describe-repositories \
+            --repository-names "${FRONTEND_REPOSITORY}" \
+            --region "${AWS_REGION}"
+
+      # ----------------------------------------------------
+      # Login to ECR
       # ----------------------------------------------------
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       # ----------------------------------------------------
-      # Build Backend Docker Image
+      # Generate immutable image tag
+      # ----------------------------------------------------
+
+      - name: Set Image Variables
+        run: |
+          set -e
+
+          IMAGE_TAG="${GITHUB_SHA}"
+
+          BACKEND_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BACKEND_REPOSITORY}:${IMAGE_TAG}"
+          FRONTEND_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${FRONTEND_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "BACKEND_IMAGE=${BACKEND_IMAGE}" >> "$GITHUB_ENV"
+          echo "FRONTEND_IMAGE=${FRONTEND_IMAGE}" >> "$GITHUB_ENV"
+
+          echo "Backend image:"
+          echo "${BACKEND_IMAGE}"
+
+          echo "Frontend image:"
+          echo "${FRONTEND_IMAGE}"
+
+      # ----------------------------------------------------
+      # Build Backend
       # ----------------------------------------------------
 
       - name: Build Backend Image
         run: |
+          set -e
+
           docker build \
-          -f ./backend/Dockerfile \
-          -t maintenance-backend \
-          ./backend
+            -f ./backend/Dockerfile \
+            -t "maintenance-backend:${IMAGE_TAG}" \
+            ./backend
 
       # ----------------------------------------------------
-      # Tag Backend Image
+      # Tag Backend
       # ----------------------------------------------------
 
       - name: Tag Backend Image
         run: |
-          docker tag maintenance-backend:latest $BACKEND_IMAGE
+          set -e
+
+          docker tag \
+            "maintenance-backend:${IMAGE_TAG}" \
+            "${BACKEND_IMAGE}"
 
       # ----------------------------------------------------
-      # Push Backend Image
+      # Push Backend
       # ----------------------------------------------------
 
       - name: Push Backend Image
         run: |
-          docker push $BACKEND_IMAGE
+          set -e
+
+          docker push "${BACKEND_IMAGE}"
 
       # ----------------------------------------------------
-      # Build Frontend Docker Image
+      # Build Frontend
       # ----------------------------------------------------
 
       - name: Build Frontend Image
         run: |
+          set -e
+
           docker build \
-          -f ./frontend/Dockerfile \
-          -t maintenance-frontend \
-          ./frontend
+            -f ./frontend/Dockerfile \
+            -t "maintenance-frontend:${IMAGE_TAG}" \
+            ./frontend
 
       # ----------------------------------------------------
-      # Tag Frontend Image
+      # Tag Frontend
       # ----------------------------------------------------
 
       - name: Tag Frontend Image
         run: |
-          docker tag maintenance-frontend:latest $FRONTEND_IMAGE
+          set -e
+
+          docker tag \
+            "maintenance-frontend:${IMAGE_TAG}" \
+            "${FRONTEND_IMAGE}"
 
       # ----------------------------------------------------
-      # Push Frontend Image
+      # Push Frontend
       # ----------------------------------------------------
 
       - name: Push Frontend Image
         run: |
-          docker push $FRONTEND_IMAGE
+          set -e
+
+          docker push "${FRONTEND_IMAGE}"
 
       # ----------------------------------------------------
       # Configure kubectl
@@ -111,64 +187,132 @@ jobs:
 
       - name: Configure kubectl
         run: |
+          set -e
+
           aws eks update-kubeconfig \
-          --region $AWS_REGION \
-          --name $EKS_CLUSTER_NAME
+            --region "${AWS_REGION}" \
+            --name "${EKS_CLUSTER_NAME}"
 
       # ----------------------------------------------------
-      # Replace Backend Image
+      # Verify EKS Access
+      # ----------------------------------------------------
+
+      - name: Verify EKS Access
+        run: |
+          set -e
+
+          echo "Current Kubernetes context:"
+          kubectl config current-context
+
+          echo "EKS cluster:"
+          kubectl cluster-info
+
+          echo "Current Kubernetes identity:"
+          kubectl auth whoami
+
+          echo "Nodes:"
+          kubectl get nodes
+
+      # ----------------------------------------------------
+      # Update Backend Manifest
       # ----------------------------------------------------
 
       - name: Update Backend Manifest
         run: |
-          sed -i "s|\${BACKEND_IMAGE}|$BACKEND_IMAGE|g" kubernetes/backend-deployment.yaml
+          set -e
+
+          sed -i \
+            "s|\${BACKEND_IMAGE}|${BACKEND_IMAGE}|g" \
+            kubernetes/backend-deployment.yaml
 
       # ----------------------------------------------------
-      # Replace Frontend Image
+      # Update Frontend Manifest
       # ----------------------------------------------------
 
       - name: Update Frontend Manifest
         run: |
-          sed -i "s|\${FRONTEND_IMAGE}|$FRONTEND_IMAGE|g" kubernetes/frontend-deployment.yaml
+          set -e
+
+          sed -i \
+            "s|\${FRONTEND_IMAGE}|${FRONTEND_IMAGE}|g" \
+            kubernetes/frontend-deployment.yaml
 
       # ----------------------------------------------------
-      # Create / Update Kubernetes Secret
+      # Show manifests before deployment
       # ----------------------------------------------------
 
-      - name: Create AWS Credentials Secret
+      - name: Verify Kubernetes Manifests
         run: |
-          kubectl create secret generic aws-credentials \
-            --from-literal=AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
-            --from-literal=AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-            --from-literal=AWS_REGION=${{ secrets.AWS_REGION }} \
-            --dry-run=client -o yaml | kubectl apply -f -
-            
+          set -e
+
+          echo "Backend image:"
+          grep -n "image:" kubernetes/backend-deployment.yaml
+
+          echo "Frontend image:"
+          grep -n "image:" kubernetes/frontend-deployment.yaml
+
       # ----------------------------------------------------
-      # Deploy Kubernetes Resources
+      # Deploy
       # ----------------------------------------------------
 
       - name: Deploy to Amazon EKS
         run: |
+          set -e
+
           kubectl apply -f kubernetes/
+
+      # ----------------------------------------------------
+      # Wait for Backend
+      # ----------------------------------------------------
+
+      - name: Wait for Backend
+        run: |
+          set -e
+
+          kubectl rollout status \
+            deployment/maintenance-backend \
+            --timeout=5m
+
+      # ----------------------------------------------------
+      # Wait for Frontend
+      # ----------------------------------------------------
+
+      - name: Wait for Frontend
+        run: |
+          set -e
+
+          kubectl rollout status \
+            deployment/maintenance-frontend \
+            --timeout=5m
 
       # ----------------------------------------------------
       # Verify Deployment
       # ----------------------------------------------------
 
-      - name: Wait for Backend
+      - name: Verify Deployment
         run: |
-          kubectl rollout status deployment/maintenance-backend
+          set -e
 
-      - name: Wait for Frontend
-        run: |
-          kubectl rollout status deployment/maintenance-frontend
-
-      # ----------------------------------------------------
-      # Verify Pods
-      # ----------------------------------------------------
-
-      - name: List Resources
-        run: |
+          echo "Deployments:"
           kubectl get deployments
-          kubectl get pods
+
+          echo "Pods:"
+          kubectl get pods -o wide
+
+          echo "Services:"
           kubectl get svc
+
+      # ----------------------------------------------------
+      # Verify Pods Are Running
+      # ----------------------------------------------------
+
+      - name: Verify Pod Status
+        run: |
+          set -e
+
+          kubectl get pods
+
+          if kubectl get pods --no-headers | grep -E 'CrashLoopBackOff|ImagePullBackOff|ErrImagePull'; then
+            echo "ERROR: One or more pods have failed."
+            exit 1
+          fi
