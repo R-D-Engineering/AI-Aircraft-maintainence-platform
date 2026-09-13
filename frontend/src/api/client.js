@@ -1,4 +1,18 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+const resolveApiBaseUrl = () => {
+  const configured = import.meta.env.VITE_API_BASE_URL;
+
+  if (configured) {
+    return configured.replace(/\/$/, '');
+  }
+
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:8000';
+  }
+
+  throw new Error('VITE_API_BASE_URL is not set. Configure the deployed backend Load Balancer URL in the frontend environment.');
+};
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 async function request(path, options = {}) {
   const url = `${API_BASE_URL}${path}`;

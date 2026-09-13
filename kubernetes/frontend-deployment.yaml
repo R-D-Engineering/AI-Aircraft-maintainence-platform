@@ -30,5 +30,8 @@ spec:
         - name: maintenance-frontend
           image: ${FRONTEND_IMAGE}
           imagePullPolicy: Always
+          env:
+            - name: VITE_API_BASE_URL
+              value: ${BACKEND_URL}
           ports:
             - containerPort: 3000
