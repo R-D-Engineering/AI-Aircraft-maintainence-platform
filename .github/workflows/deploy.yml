@@ -55,6 +55,7 @@ jobs:
       - name: Build Backend Image
         run: |
           docker build \
+          -f ./backend/Dockerfile \
           -t maintenance-backend \
           ./backend
 
@@ -81,6 +82,7 @@ jobs:
       - name: Build Frontend Image
         run: |
           docker build \
+          -f ./frontend/Dockerfile \
           -t maintenance-frontend \
           ./frontend
 
