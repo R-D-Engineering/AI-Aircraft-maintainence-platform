@@ -28,10 +28,7 @@ spec:
     spec:
       containers:
         - name: maintenance-frontend
-
           image: ${FRONTEND_IMAGE}
-
           imagePullPolicy: Always
-
           ports:
             - containerPort: 3000

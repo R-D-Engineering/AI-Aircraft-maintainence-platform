@@ -28,16 +28,8 @@ spec:
     spec:
       containers:
         - name: maintenance-backend
-
           # Docker image stored in Amazon ECR
           image: ${BACKEND_IMAGE}
-
           imagePullPolicy: Always
-
           ports:
             - containerPort: 8000
-
-          # Load AWS credentials from Kubernetes Secret
-          envFrom:
-            - secretRef:
-                name: aws-credentials
