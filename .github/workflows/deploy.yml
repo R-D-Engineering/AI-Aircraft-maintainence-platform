@@ -34,14 +34,14 @@ jobs:
       # ----------------------------------------------------
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # ----------------------------------------------------
       # AWS OIDC Authentication
       # ----------------------------------------------------
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -125,7 +125,7 @@ jobs:
             ./backend
 
       # ----------------------------------------------------
-      # Tag Backend
+      # Tag Backend Image
       # ----------------------------------------------------
 
       - name: Tag Backend Image
@@ -160,7 +160,7 @@ jobs:
             ./frontend
 
       # ----------------------------------------------------
-      # Tag Frontend
+      # Tag Frontend Image
       # ----------------------------------------------------
 
       - name: Tag Frontend Image
