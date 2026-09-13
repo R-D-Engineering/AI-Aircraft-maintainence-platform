@@ -19,6 +19,7 @@ jobs:
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
       BACKEND_IMAGE: ${{ secrets.BACKEND_IMAGE }}
       FRONTEND_IMAGE: ${{ secrets.FRONTEND_IMAGE }}
       EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
@@ -39,7 +40,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.EKS_DEPLOY_ROLE_NAME }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       # ----------------------------------------------------
