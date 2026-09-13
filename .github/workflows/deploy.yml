@@ -27,6 +27,8 @@ jobs:
       BACKEND_REPOSITORY: ${{ secrets.BACKEND_REPOSITORY }}
       FRONTEND_REPOSITORY: ${{ secrets.FRONTEND_REPOSITORY }}
 
+      EKS_ACCESS_POLICY_ARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy
+
     steps:
 
       # ----------------------------------------------------
@@ -180,6 +182,116 @@ jobs:
           set -e
 
           docker push "${FRONTEND_IMAGE}"
+
+      # ----------------------------------------------------
+      # Prepare EKS Access Entries
+      #
+      # This is intentionally automated so no manual AWS CLI
+      # commands are required. The GitHub Actions role creates
+      # its own STANDARD access entry if one does not exist,
+      # and associates AmazonEKSAdminPolicy if needed.
+      # ----------------------------------------------------
+
+      - name: Configure EKS Access for GitHub Actions
+        run: |
+          set -euo pipefail
+
+          PRINCIPAL_ARN="${AWS_ROLE_ARN}"
+          CLUSTER_NAME="${EKS_CLUSTER_NAME}"
+          REGION="${AWS_REGION}"
+          ACCESS_POLICY_ARN="${EKS_ACCESS_POLICY_ARN}"
+
+          echo "Checking EKS authentication mode..."
+
+          AUTH_MODE="$(aws eks describe-cluster \
+            --name "${CLUSTER_NAME}" \
+            --region "${REGION}" \
+            --query 'cluster.accessConfig.authenticationMode' \
+            --output text)"
+
+          echo "Current EKS authentication mode: ${AUTH_MODE}"
+
+          if [ "${AUTH_MODE}" = "CONFIG_MAP" ]; then
+            echo "Access entries are not enabled. Switching to API_AND_CONFIG_MAP..."
+
+            aws eks update-cluster-config \
+              --name "${CLUSTER_NAME}" \
+              --region "${REGION}" \
+              --access-config authenticationMode=API_AND_CONFIG_MAP
+
+            echo "Waiting for EKS access-entry authentication mode..."
+
+            for i in $(seq 1 60); do
+              CURRENT_MODE="$(aws eks describe-cluster \
+                --name "${CLUSTER_NAME}" \
+                --region "${REGION}" \
+                --query 'cluster.accessConfig.authenticationMode' \
+                --output text)"
+
+              if [ "${CURRENT_MODE}" = "API_AND_CONFIG_MAP" ] || [ "${CURRENT_MODE}" = "API" ]; then
+                echo "EKS authentication mode is now: ${CURRENT_MODE}"
+                break
+              fi
+
+              echo "Current mode: ${CURRENT_MODE}; waiting..."
+              sleep 10
+            done
+
+            CURRENT_MODE="$(aws eks describe-cluster \
+              --name "${CLUSTER_NAME}" \
+              --region "${REGION}" \
+              --query 'cluster.accessConfig.authenticationMode' \
+              --output text)"
+
+            if [ "${CURRENT_MODE}" != "API_AND_CONFIG_MAP" ] && [ "${CURRENT_MODE}" != "API" ]; then
+              echo "ERROR: EKS access-entry authentication mode was not enabled."
+              exit 1
+            fi
+          fi
+
+          echo "Checking access entry for:"
+          echo "${PRINCIPAL_ARN}"
+
+          if aws eks describe-access-entry \
+              --cluster-name "${CLUSTER_NAME}" \
+              --principal-arn "${PRINCIPAL_ARN}" \
+              --region "${REGION}" >/dev/null 2>&1; then
+            echo "EKS access entry already exists."
+          else
+            echo "Creating EKS STANDARD access entry..."
+
+            aws eks create-access-entry \
+              --cluster-name "${CLUSTER_NAME}" \
+              --principal-arn "${PRINCIPAL_ARN}" \
+              --type STANDARD \
+              --region "${REGION}"
+
+            echo "EKS access entry created."
+          fi
+
+          echo "Checking EKS access policy association..."
+
+          ASSOCIATED_POLICY_COUNT="$(aws eks list-associated-access-policies \
+            --cluster-name "${CLUSTER_NAME}" \
+            --principal-arn "${PRINCIPAL_ARN}" \
+            --region "${REGION}" \
+            --query "associatedAccessPolicies[?policyArn=='${ACCESS_POLICY_ARN}'] | length(@)" \
+            --output text)"
+
+          if [ "${ASSOCIATED_POLICY_COUNT}" = "1" ]; then
+            echo "AmazonEKSAdminPolicy is already associated."
+          else
+            echo "Associating AmazonEKSAdminPolicy..."
+
+            aws eks associate-access-policy \
+              --cluster-name "${CLUSTER_NAME}" \
+              --principal-arn "${PRINCIPAL_ARN}" \
+              --policy-arn "${ACCESS_POLICY_ARN}" \
+              --access-scope type=cluster \
+              --region "${REGION}"
+
+            echo "AmazonEKSAdminPolicy associated."
+          fi
 
       # ----------------------------------------------------
       # Configure kubectl
