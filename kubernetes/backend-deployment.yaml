@@ -26,10 +26,16 @@ spec:
         app: maintenance-backend
 
     spec:
+      serviceAccountName: maintenance-backend
       containers:
         - name: maintenance-backend
           # Docker image stored in Amazon ECR
           image: ${BACKEND_IMAGE}
           imagePullPolicy: Always
+          env:
+            - name: AWS_REGION
+              value: us-east-1
+            - name: BEDROCK_MODEL_ID
+              value: amazon.nova-pro-v1:0
           ports:
             - containerPort: 8000

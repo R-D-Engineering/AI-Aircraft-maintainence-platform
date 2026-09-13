@@ -28,6 +28,7 @@ jobs:
       FRONTEND_REPOSITORY: ${{ secrets.FRONTEND_REPOSITORY }}
 
       EKS_ACCESS_POLICY_ARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+      BACKEND_POD_ROLE_ARN: ${{ secrets.BACKEND_POD_ROLE_ARN }}
 
     steps:
 
@@ -366,6 +367,10 @@ jobs:
           sed -i \
             "s|\${BACKEND_IMAGE}|${BACKEND_IMAGE}|g" \
             kubernetes/backend-deployment.yaml
+
+          sed -i \
+            "s|\${BACKEND_POD_ROLE_ARN}|${BACKEND_POD_ROLE_ARN}|g" \
+            kubernetes/backend-serviceaccount.yaml
 
       # ----------------------------------------------------
       # Update Frontend Manifest
